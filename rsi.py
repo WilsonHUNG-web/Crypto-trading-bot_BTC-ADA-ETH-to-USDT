@@ -11,7 +11,7 @@ class Strategy():
         # strategy property
         self.subscribedBooks = {
             'Binance': {
-                'pairs': ['BTC-USDT'],
+                'pairs': ['ADA-USDT'],
             },
         }
         self.period = 15 * 60 #15 mins bar
@@ -26,11 +26,21 @@ class Strategy():
         self.UP = 1
         self.DOWN = 2
         self.RSI = -1
+        self.RSI_mid = -1
+        self.RSI_long = -1
+        self.RSI_long_long = -1
         self.stop_flag = False
-        self.stage1 = False
-        self.stage2 = False
-        self.stage3 = False
+        self.pre_RSI =-1
+        self.prepre_RSI = -1
+        self.init_amount = 0
+        self.initialized = False
+        self.profit = 0
+        self.portions = 20.0
 
+        self.RSI_buy_signal = 0
+        self.RSI_sell_signal = 0
+
+        self.unittrade_base = 0
 
     def on_order_state_change(self,  order):
         Log("on order state change message: " + str(order) + " order price: " + str(order["price"]))
@@ -45,17 +55,41 @@ class Strategy():
         return self.DOWN
 
     def get_rsi(self):
-        self.RSI = talib.RSI(self.close_price_trace)
-        return self.RSI
+        RSI = talib.RSI(self.close_price_trace, timeperiod = 2)
+        self.RSI = RSI[-1]
+        #return self.RSI
+
+    def get_rsi_mid(self):
+        RSI_mid = talib.RSI(self.close_price_trace, timeperiod = 6)
+        self.RSI_mid = RSI_mid [-1]
+        #return self.RSI_mid   
+
+    def get_rsi_long(self):
+        RSI_long = talib.RSI(self.close_price_trace, timeperiod = 10)
+        self.RSI_long = RSI_long[-1]
+        #return self.RSI_long
+
+   #def get_rsi_long_long(self):
+   #     RSI_long_long = talib.RSI(self.close_price_trace, timeperiod = 14)
+    #    self.get_rsi_long_long = RSI_long_long[-1]
+        #return self.RSI_long
+
+    def initialization(self, amount):
+        self.init_amount = amount
+        self.unittrade_base = self.init_amount/self.portions
+        self.initialized = True
 
 
     # called every self.period
     def trade(self, information):
         exchange = list(information['candles'])[0]
         pair = list(information['candles'][exchange])[0]
-        target_currency = pair.split('-')[0]  #BTC
+        target_currency = pair.split('-')[0]  #ETH
         base_currency = pair.split('-')[1]  #USDT
         base_currency_amount = self['assets'][exchange][base_currency] 
+        if not self.initialized:
+            self.initialization(base_currency_amount)
+
         target_currency_amount = self['assets'][exchange][target_currency] 
         # add latest price into trace
         close_price = information['candles'][exchange][pair][0]['close']
@@ -63,77 +97,132 @@ class Strategy():
         # only keep max length of ma_long count elements
         self.close_price_trace = self.close_price_trace[-self.ma_long:]
         # calculate current ma cross status
+        #cur_cross = self.get_current_ma_cross()
+        #Log('RSI='+str( self.RSI ))
+        #self.RSI = (self.get_rsi())[-1]
+        #self.RSI_mid = (self.get_rsi_mid())[-1]
+        #self.RSI_long = (self.get_rsi_long())[-1]
+        self.get_rsi()
+        self.get_rsi_mid()
+        self.get_rsi_long()
+        #self.get_rsi_long_long()
+
         cur_cross = self.get_current_ma_cross()
-        rsi = self.get_rsi()
-        r = rsi[-1]
-        #Log('Capital = ' + str(base_currency_amount + target_currency_amount*close_price) + 'USDT')
-        profit = ((base_currency_amount + target_currency_amount*close_price) / 100000)*100-100
-        #Log('RSI='+str(r))
+        Log('last_cross: ' + str(self.last_cross_status))
+        Log('cur_cross: ' + str(cur_cross))
+
+        #Log('RSI='+str( self.RSI )+' pre-RSI='+str( self.pre_RSI )+' prepre-RSI='+str( self.prepre_RSI ))
+
+        Log('Capital = ' + str(base_currency_amount + target_currency_amount*close_price) + 'USDT')
+        self.profit = ((base_currency_amount + target_currency_amount*close_price) / self.init_amount) -1.0
+        
         #Log('Profit=  ' +str(profit) )
         #stop_flag = False
-        if profit > 1:
+        if self.profit < -0.15:
             self.stop_flag = True
-            self.stage1 = True
-            #Log('current profit = ' + str(profit))
-        if profit > 2:
-            self.stage2 = True
-        if profit > 3:
-            self.stage3 = True
-
+            Log('Current profit = ' + str(self.profit) + '. stop trade if profit < -0.1' )
+        if self.RSI_mid<20 and self.RSI_mid>0 and self.RSI < self.pre_RSI:
+            self.stop_flag = False #back to market
+            
         if cur_cross is None:
             return []
         if self.last_cross_status is None:
             self.last_cross_status = cur_cross
             return []
-
-        rsibuy = 30 
-        rsisell = 80
-
-        if profit > 0:
-            rsibuy = 30 - profit
-            rsisell = 80 + profit
-        #if self.stage1 == True:
-        #    rsibuy =  25
-        #    rsisell = 85
-        
-        #if self.stage2 == True:
-        #    rsibuy =  20
-        #    rsisell = 90           
+        #real = talib.AVGPRICE()
+        #Log('real='+str(real))
 
         # r<30, buy 0.1 BTC
-        #if r<rsibuy and self.stop_flag==False:
-        if r<rsibuy:
+        #if r<20 and self.stop_flag==False:
+        
+        #if (self.RSI <20 and self.pre_RSI<20 and self.prepre_RSI <20)\
+        #and (self.RSI >0 and self.pre_RSI>0  and self.prepre_RSI>0 )\
+        #and self.stop_flag ==False:
+
+        if (self.RSI <20 and self.RSI_mid<20)\
+        and (self.RSI >0 and self.RSI_mid>0  )\
+        and self.stop_flag ==False:
+        #and cur_cross == self.UP and self.last_cross_status == self.DOWN:
+
+            Log('case-1')
+            self.pre_RSI = self.RSI
+            self.prepre_RSI = self.pre_RSI
         #if self.last_type == 'sell' and r<30:
-            Log('buy RSI='+str(r))
-            #Log('buying 0.1 unit of ' + str(target_currency))
+            #Log('RSI='+str(r))
+            Log('buying '+ str(self.unittrade_base / close_price) +' unit of ' + str(target_currency))
             self.last_type = 'buy'
             self.last_cross_status = cur_cross
             return [
                 {
                     'exchange': exchange,
-                    'amount': 0.1,
+                    'amount': self.unittrade_base / close_price,
                     'price': -1,
                     'type': 'MARKET',
                     'pair': pair,
                 }
             ]
-        # rsi>80, sell 0.1BTC
-        #elif self.last_type == 'buy' and r>80:
-        #elif r>rsisell or self.stop_flag==True:
-        elif r>80 and target_currency_amount>0:
-            Log('sell RSI='+str(r))
+            self.RSI_buy_signal  =0
+        # rsi>80, sell BTC
+        #elif (self.RSI >80 and self.pre_RSI>80 and self.prepre_RSI >80) and self.stop_flag ==False:
+        #elif (self.RSI >80 and self.pre_RSI>80 ) and self.stop_flag ==False:
+        #and cur_cross == self.DOWN and self.last_cross_status == self.UP:
+        elif (self.RSI >80 and self.RSI_mid>80 ) and self.stop_flag ==False:
+        
+            Log('case-2')
+            self.pre_RSI = self.RSI
+            self.prepre_RSI = self.pre_RSI
             #Log('assets before selling: ' + str(self['assets'][exchange][base_currency]))
+            Log('selling '+ str(self.unittrade_base / close_price) +' unit of ' + str(target_currency))
             self.last_type = 'sell'
             self.last_cross_status = cur_cross
             return [
                 {
                     'exchange': exchange,
-                    #'amount': -0.1,
-                    'amount': -target_currency_amount*0.1,
+                    'amount': -self.unittrade_base / close_price,
                     'price': -1,
                     'type': 'MARKET',
                     'pair': pair,
                 }
             ]
-        self.last_cross_status = cur_cross
-        return []
+        elif (self.RSI > self.pre_RSI and self.pre_RSI>80) and self.stop_flag ==False:
+        
+            Log('case - 3 increaseing RSI, sell all')
+            self.pre_RSI = self.RSI
+            self.prepre_RSI = self.pre_RSI
+            #Log('assets before selling: ' + str(self['assets'][exchange][base_currency]))
+            Log('selling '+ str(self.unittrade_base / close_price) +' unit of ' + str(target_currency))
+            self.last_type = 'sellall'
+            self.last_cross_status = cur_cross
+            self.stop_flag = True
+            return [
+                {
+                    'exchange': exchange,
+                    'amount': -target_currency_amount,
+                    'price': -1,
+                    'type': 'MARKET',
+                    'pair': pair,
+                }
+            ]
+
+        elif self.stop_flag == True and self.last_type != 'sellall':
+            Log('case-4: stopflag')
+            self.pre_RSI = self.RSI
+            self.prepre_RSI = self.pre_RSI
+            self.last_cross_status = cur_cross
+            Log('selling all: '+ str(self.unittrade_base / close_price) +' unit of ' + str(target_currency))
+            self.last_type = 'sellall'
+            return [
+                {
+                    'exchange': exchange,
+                    'amount': -target_currency_amount,
+                    'price': -1,
+                    'type': 'MARKET',
+                    'pair': pair,
+                }
+            ]
+        else:
+            Log('else')
+            self.pre_RSI = self.RSI
+            self.prepre_RSI = self.pre_RSI
+            self.last_cross_status = cur_cross
+            return []
